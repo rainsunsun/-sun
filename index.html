@@ -1,0 +1,569 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <title>简历生成器</title>
+  <!--
+    解析库 marked：把 Md 转成网页。优先从本地 node_modules 加载（打包 exe 后离线可用）。
+    如果只想用浏览器打开，把下一行换成 CDN：
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  -->
+  <script src="./node_modules/marked/marked.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --resume-font: "Microsoft YaHei";
+      --resume-size: 14.5px;
+      --resume-lh: 1.75;
+      --resume-margin: 14mm;
+    }
+    body {
+      font-family: "Microsoft YaHei", sans-serif;
+      background-color: #f5f7fa;
+      padding: 20px;
+    }
+    .container {
+      max-width: 1400px;
+      margin: 0 auto;
+      display: grid;
+      grid-template-columns: 360px 1fr;
+      gap: 24px;
+    }
+
+    /* ===== 左侧控制面板 ===== */
+    .panel-left {
+      background: #fff;
+      padding: 20px;
+      border-radius: 8px;
+      box-shadow: 0 1px 6px rgba(0,0,0,.08);
+      height: fit-content;
+    }
+    .panel-left h3 { font-size: 18px; font-weight: bold; margin-bottom: 16px; }
+    .upload-item { margin-bottom: 16px; }
+    .upload-item label { display: block; margin-bottom: 6px; color: #444; }
+    input[type="file"] { width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; }
+    #avatarPreview {
+      width: 90px; height: 120px;
+      object-fit: cover; border: 1px solid #ddd; margin: 10px 0; display: none;
+    }
+
+    /* 排版设置 */
+    .settings { margin: 4px 0 16px; padding-top: 12px; border-top: 1px solid #eee; }
+    .settings h4 { font-size: 14px; margin-bottom: 10px; color: #333; }
+    .setting-row { margin-bottom: 12px; }
+    .setting-row label { display: block; font-size: 13px; color: #555; margin-bottom: 4px; }
+    .setting-row select, .setting-row input[type="text"] {
+      width: 100%; padding: 6px 8px; border: 1px solid #ddd; border-radius: 4px; font-size: 13px;
+    }
+    .setting-row input[type="range"] { width: 100%; }
+    .setting-row .val { color: #1d6fb8; font-weight: bold; }
+
+    .md-editor-wrap { margin-top: 4px; }
+    #mdEditor {
+      width: 100%; height: 460px; padding: 10px;
+      border: 1px solid #ddd; border-radius: 4px;
+      font-family: Consolas, Monaco, monospace; font-size: 13px; resize: vertical;
+    }
+    button {
+      padding: 10px 14px; background: #2563eb; color: #fff;
+      border: none; border-radius: 4px; cursor: pointer; width: 100%; margin-top: 8px;
+    }
+    button:hover { background: #1d4ed8; }
+    button.ghost { background: #eef2f7; color: #333; }
+    button.ghost:hover { background: #e2e8f0; }
+    .page-count { margin-top: 12px; text-align: center; color: #1d6fb8; font-weight: bold; font-size: 14px; }
+
+    /* ===== 右侧预览区 ===== */
+    .panel-right {
+      background: #e8edf3; padding: 24px; border-radius: 8px;
+      box-shadow: 0 1px 6px rgba(0,0,0,.08); min-height: 800px;
+      overflow-x: auto; /* 页面固定 210mm，窄窗口时横向滚动，避免测量错位 */
+    }
+
+    /* 每一页 A4 纸：210mm × 297mm，边距/字体/字号/行距都由设置控制 */
+    .resume-page {
+      width: 210mm; height: 297mm;
+      padding: var(--resume-margin);
+      display: flex; flex-direction: column;
+      overflow: hidden;
+      background: #fff;
+      box-shadow: 0 2px 12px rgba(0,0,0,.10);
+      margin: 0 auto 16px;
+      font-family: var(--resume-font), "微软雅黑", sans-serif;
+      font-size: var(--resume-size);
+      line-height: var(--resume-lh);
+      color: #2b2b2b;
+    }
+    /* 两页之间的分隔提示 */
+    .page-divider {
+      text-align: center; color: #999; font-size: 13px;
+      margin: 4px 0 14px; letter-spacing: 1px;
+    }
+    /* 页眉 / 页脚 */
+    .page-header { font-size: 12px; color: #999; text-align: center; padding-bottom: 8px; }
+    .page-content { flex: 1; }
+    .page-footer { font-size: 12px; color: #999; text-align: center; padding-top: 8px; }
+
+    /* 头像靠右、方形证件照样式；左侧留给姓名/联系方式 */
+    .resume-avatar-wrap { float: right; margin: 4px 0 12px 20px; }
+    .resume-avatar-wrap img {
+      width: 120px; height: 160px;
+      object-fit: cover; border: 1px solid #dbe7f3; background: #f0f6fc;
+    }
+
+    /* 姓名/标题：深蓝（随字号等比例缩放） */
+    .resume-page h1 { font-size: 1.8em; text-align: left; margin: 0 0 6px; color: #1a3f66; }
+    /* 大模块标题：灰色分割线 */
+    .resume-page h2 {
+      font-size: 1.15em; font-weight: bold; color: #333;
+      border-bottom: 1px solid #ccc;
+      padding-bottom: 6px; margin: 24px 0 14px;
+    }
+    .resume-page .item-header { display: flex; justify-content: space-between; margin: 10px 0 6px; }
+    .resume-page .item-header .name { font-weight: bold; color: #1f3a5f; }
+    .resume-page .item-header .time { color: #7a8ba0; }
+    .resume-page .desc-text { margin: 6px 0; color: #4a5568; }
+    .resume-page ul { padding-left: 22px; margin: 8px 0; }
+    .resume-page li { margin: 7px 0; }
+    .resume-page .result-text {
+      margin: 12px 0; padding: 8px 12px; font-weight: 500;
+      color: #1a3f66; background: #f0f6fc; border-left: 3px solid #3b82c4;
+      border-radius: 0 4px 4px 0;
+    }
+    .resume-page strong { color: #1d6fb8; }
+    .resume-page table { border-collapse: collapse; width: 100%; margin: 10px 0; }
+    .resume-page th, .resume-page td { border: 1px solid #dbe7f3; padding: 6px 10px; text-align: left; }
+    .resume-page th { background: #eef5fc; color: #1a3f66; }
+    .resume-page code { background: #f0f6fc; color: #1d6fb8; padding: 1px 6px; border-radius: 3px; font-family: Consolas, monospace; }
+
+    /* 隐藏的测量容器：加上 resume-page 类，让 h1/h2/ul/li 等内容样式和真实页面完全一致，
+       再覆盖掉它的盒模型（固定高度/边距/flex/裁剪等），只用来量分页高度 */
+    #measureHost {
+      position: absolute; left: -9999px; top: 0;
+      width: calc(210mm - 2 * var(--resume-margin));
+      height: auto;             /* 覆盖 .resume-page 的固定 297mm 高度 */
+      padding: 0;               /* 覆盖页边距，量的是纯内容区 */
+      display: block;           /* 覆盖 flex 列布局，子块按正常块流排列 */
+      overflow: visible;        /* 覆盖 hidden，不裁剪 */
+      margin: 0;                /* 覆盖居中 margin */
+      background: transparent;  /* 覆盖白底 */
+      box-shadow: none;         /* 覆盖阴影 */
+      font-family: var(--resume-font), "微软雅黑", sans-serif;
+      font-size: var(--resume-size);
+      line-height: var(--resume-lh);
+      color: #2b2b2b;
+    }
+
+    /* ===== 打印 / 导出 PDF 专用样式 ===== */
+    @media print {
+      @page { size: A4; margin: 0; }
+      body { padding: 0; background: #fff; }
+      .no-print { display: none !important; }
+      .page-divider { display: none !important; }
+      #measureHost { display: none !important; }
+      .container { display: block; }
+      .panel-right { background: #fff; padding: 0; box-shadow: none; min-height: 0; }
+      .resume-page {
+        width: 210mm; max-width: none; height: 297mm; overflow: hidden;
+        margin: 0; box-shadow: none;
+        break-after: page; /* 每一页 A4 纸单独打印一页 */
+      }
+      .resume-page:last-child { break-after: auto; }
+      .resume-page h2, .resume-page li, .resume-page .item-header,
+      .resume-page .desc-text, .resume-page .result-text { break-inside: avoid; }
+      .resume-page h2 { break-after: avoid; }
+    }
+  </style>
+</head>
+<body>
+<div class="container">
+  <!-- 左侧控制面板（打印时隐藏） -->
+  <div class="panel-left no-print">
+    <h3>简历配置</h3>
+
+    <div class="upload-item">
+      <label>上传头像图片</label>
+      <input type="file" id="avatarInput" accept="image/*">
+      <img id="avatarPreview" alt="头像预览">
+    </div>
+
+    <!-- 头像位置设置 -->
+    <div class="settings">
+      <h4>头像设置</h4>
+      <div class="setting-row">
+        <label>位置</label>
+        <select id="avatarAlign">
+          <option value="right">靠右</option>
+          <option value="left">靠左</option>
+          <option value="center">居中</option>
+        </select>
+      </div>
+      <div class="setting-row">
+        <label>左右微调 <span class="val" id="avatarXVal">0</span>px</label>
+        <input type="range" id="avatarXRange" min="-30" max="30" step="1" value="0">
+      </div>
+      <div class="setting-row">
+        <label>上下微调 <span class="val" id="avatarYVal">0</span>px</label>
+        <input type="range" id="avatarYRange" min="0" max="60" step="1" value="0">
+      </div>
+      <div class="setting-row">
+        <label>宽度 <span class="val" id="avatarWVal">120</span>px</label>
+        <input type="range" id="avatarWRange" min="60" max="200" step="2" value="120">
+      </div>
+      <div class="setting-row">
+        <label>高度 <span class="val" id="avatarHVal">160</span>px</label>
+        <input type="range" id="avatarHRange" min="80" max="240" step="2" value="160">
+      </div>
+    </div>
+
+    <div class="upload-item">
+      <label>上传简历文件（.md）</label>
+      <input type="file" id="mdInput" accept=".md">
+    </div>
+
+    <!-- 排版设置 -->
+    <div class="settings">
+      <h4>排版设置</h4>
+      <div class="setting-row">
+        <label>字体</label>
+        <select id="fontSelect">
+          <option value="Microsoft YaHei">微软雅黑</option>
+          <option value="SimSun">宋体</option>
+          <option value="SimHei">黑体</option>
+          <option value="KaiTi">楷体</option>
+          <option value="FangSong">仿宋</option>
+          <option value="DengXian">等线</option>
+        </select>
+      </div>
+      <div class="setting-row">
+        <label>字号 <span class="val" id="sizeVal">14.5</span>px</label>
+        <input type="range" id="sizeRange" min="11" max="20" step="0.5" value="14.5">
+      </div>
+      <div class="setting-row">
+        <label>行距 <span class="val" id="lineVal">1.75</span></label>
+        <input type="range" id="lineRange" min="1.2" max="2.4" step="0.05" value="1.75">
+      </div>
+      <div class="setting-row">
+        <label>页边距 <span class="val" id="marginVal">14</span>mm</label>
+        <input type="range" id="marginRange" min="8" max="25" step="1" value="14">
+      </div>
+      <div class="setting-row">
+        <label>页眉（留空则无）</label>
+        <input type="text" id="headerInput" placeholder="例如：个人简历">
+      </div>
+      <div class="setting-row">
+        <label>页脚（支持 {页码} {总页数}）</label>
+        <input type="text" id="footerInput" placeholder="例如：第 {页码} 页 / 共 {总页数} 页">
+      </div>
+    </div>
+
+    <div class="md-editor-wrap">
+      <label>在线编辑简历（实时预览）</label>
+      <textarea id="mdEditor" placeholder="在这里直接写简历（Md 格式），修改会实时更新预览"></textarea>
+    </div>
+
+    <div id="pageCount" class="page-count">共 1 页（A4）</div>
+
+    <button id="exportPdf">⬇ 导出 PDF（文字可复制）</button>
+    <button id="printBtn" class="ghost">🖨 打印预览 / 浏览器另存为 PDF</button>
+    <button id="loadSample" class="ghost">加载示例模板</button>
+    <button id="clearBtn" class="ghost">清空</button>
+  </div>
+
+  <!-- 右侧简历预览（按 A4 自动分页） -->
+  <div class="panel-right">
+    <div id="resumePages" class="resume-pages"></div>
+  </div>
+</div>
+
+<!-- 隐藏测量容器，用于计算分页（带 resume-page 类，确保内容样式一致） -->
+<div id="measureHost" class="resume-page"></div>
+
+<script>
+  // ===== 示例模板（打开后自动填充，方便"填着改"） =====
+  const SAMPLE = [
+    '# 张三',
+    '**求职意向**：软件测试工程师 / 测试开发工程师',
+    '',
+    '**联系电话**：13800000000',
+    '',
+    '**邮箱地址**：your-email@example.com',
+    '',
+    '**GitHub**：https://github.com/yourname',
+    '',
+    '## 教育经历',
+    '**2024.09 - 2027.06　　某某大学（211）　　某某专业**',
+    '',
+    '**2020.09 - 2024.06　　某某大学　　某某专业**',
+    '',
+    '硕士主修：机器学习、深度学习、数据分析',
+    '',
+    '本科主修：C 语言、数据结构、操作系统、数据库',
+    '',
+    '## 专业技能',
+    '### 测试开发 & 自动化测试',
+    '熟练使用 **Python** 进行测试脚本开发，熟悉 **Selenium、Playwright、Requests** 主流自动化技术栈。',
+    '### 接口 & 性能测试',
+    '熟悉 **HTTP/HTTPS** 协议，熟练使用 **Postman、JMeter** 完成接口与性能测试。',
+    '### AI 测试工程化',
+    '具备 **RAG 知识库、AI 翻译平台**等 AI 应用完整测试经验。',
+    '',
+    '## 实习经历',
+    '### 某某科技公司｜测试开发实习生　2026.04 - 2026.07',
+    '- 参与自研 AI 应用产品线质量保障，负责 RAG 知识库、大模型翻译平台等模块测试。',
+    '- 基于 Python 编写批量校验脚本，减少人工复核工作量约 40%。',
+    '',
+    '### 某某实验室｜实习生　2025.08 - 2025.12',
+    '- 负责智能班组长系统迭代测试，覆盖打卡签到、班组管理等模块。',
+    '',
+    '## 项目经历',
+    '### 一、某某业务后台｜全流程测试开发',
+    '**项目工具**：Python / Playwright / JMeter / Jenkins',
+    '- 参与需求评审，设计 200+ 功能、边界及安全测试用例。',
+    '',
+    '## 校园经历',
+    '### 校篮球队队长 | 2022.03 - 2023.03',
+    '统筹球队训练、赛事筹备与人员分工。',
+    '',
+    '## 获奖与证书',
+    '- 某某竞赛｜国家级三等奖',
+    '- 大学英语六级（CET-6）'
+  ].join('\n');
+
+  const $ = (id) => document.getElementById(id);
+  const avatarInput = $('avatarInput');
+  const avatarPreview = $('avatarPreview');
+  const resumePages = $('resumePages');
+  const measureHost = $('measureHost');
+  const pageCountEl = $('pageCount');
+  const mdInput = $('mdInput');
+  const mdEditor = $('mdEditor');
+
+  // ===== 排版状态（默认值） =====
+  const state = {
+    font: 'Microsoft YaHei',
+    size: 14.5,
+    lineH: 1.75,
+    margin: 14,   // mm
+    header: '',
+    footer: '',
+    avatarAlign: 'right',  // 头像位置：left / center / right
+    avatarX: 0,            // 左右微调 px
+    avatarY: 0,            // 上下微调 px
+    avatarW: 120,          // 头像宽度 px
+    avatarH: 160           // 头像高度 px
+  };
+
+  let avatarData = ''; // 头像 base64
+
+  if (typeof marked === 'undefined') {
+    alert('未找到解析库。请先在项目目录执行 npm install。');
+  }
+
+  // 把排版状态写到 CSS 变量，页面和测量容器共用
+  function applyStyle() {
+    const r = document.documentElement.style;
+    r.setProperty('--resume-font', '"' + state.font + '"');
+    r.setProperty('--resume-size', state.size + 'px');
+    r.setProperty('--resume-lh', String(state.lineH));
+    r.setProperty('--resume-margin', state.margin + 'mm');
+  }
+
+  // 生成头像元素（浮动在页面右上角）
+  function makeAvatarEl() {
+    const wrap = document.createElement('div');
+    wrap.className = 'resume-avatar-wrap';
+    // 位置：靠左 / 居中 / 靠右
+    if (state.avatarAlign === 'left') {
+      wrap.style.float = 'left';
+      wrap.style.margin = '4px 20px 12px 0';
+    } else if (state.avatarAlign === 'center') {
+      wrap.style.float = 'none';
+      wrap.style.textAlign = 'center';
+      wrap.style.margin = '4px 0 12px';
+    } else {
+      wrap.style.float = 'right';
+      wrap.style.margin = '4px 0 12px 20px';
+    }
+    // 手动微调（transform 只影响显示，不影响分页）
+    wrap.style.transform = 'translate(' + state.avatarX + 'px,' + state.avatarY + 'px)';
+    const img = document.createElement('img');
+    img.src = avatarData;
+    img.style.width = state.avatarW + 'px';
+    img.style.height = state.avatarH + 'px';
+    wrap.appendChild(img);
+    return wrap;
+  }
+
+  // 量一行页眉/页脚的高度
+  function measureLine(text, cls) {
+    if (!text) return 0;
+    const d = document.createElement('div');
+    d.className = cls;
+    d.textContent = text;
+    measureHost.appendChild(d);
+    const h = d.offsetHeight;
+    measureHost.removeChild(d);
+    return h;
+  }
+
+  // 替换页眉/页脚里的 {页码} {总页数}
+  function fillTokens(text, idx, total) {
+    return text.replace(/\{页码\}/g, String(idx + 1)).replace(/\{总页数\}/g, String(total));
+  }
+
+  // 组装一页 A4 纸
+  function buildPage(nodes, withAvatar, idx, total) {
+    const page = document.createElement('div');
+    page.className = 'resume-page';
+    if (state.header) {
+      const h = document.createElement('div');
+      h.className = 'page-header';
+      h.textContent = fillTokens(state.header, idx, total);
+      page.appendChild(h);
+    }
+    const content = document.createElement('div');
+    content.className = 'page-content';
+    if (withAvatar && avatarData) content.appendChild(makeAvatarEl());
+    nodes.forEach((el) => content.appendChild(el));
+    page.appendChild(content);
+    if (state.footer) {
+      const f = document.createElement('div');
+      f.className = 'page-footer';
+      f.textContent = fillTokens(state.footer, idx, total);
+      page.appendChild(f);
+    }
+    return page;
+  }
+
+  // 渲染 + 按 A4 自动分页
+  function renderResume(md) {
+    applyStyle();
+    measureHost.innerHTML = '';
+
+    // 每页可用内容高度 = A4 高 297mm - 上下边距 - 页眉 - 页脚
+    const headerH = measureLine(state.header, 'page-header');
+    const footerH = measureLine(state.footer, 'page-footer');
+    const innerPx = (297 - state.margin * 2) * 96 / 25.4;
+    // 留 12px 安全余量，吸收毫米换算与整数像素四舍五入的误差
+    const contentH = Math.max(120, innerPx - headerH - footerH - 12);
+
+    measureHost.innerHTML = marked.parse(md || '');
+    if (avatarData) measureHost.insertBefore(makeAvatarEl(), measureHost.firstChild);
+
+    // 分页：按每个块“含外边距”的真实高度算，超出本页容量就整块换到下一页。
+    // offsetHeight 不含 margin，所以用「下一块顶部 - 本块顶部」拿到含塌陷外边距的占高，
+    // 页首/页尾块再各自补上完整的上/下外边距。
+    const blocks = Array.from(measureHost.children).filter(
+      (el) => !(el.classList && el.classList.contains('resume-avatar-wrap')) // 头像单独处理
+    );
+    const topOf = blocks.map((el) => el.offsetTop);
+    const heightOf = blocks.map((el) => el.offsetHeight);
+    const mtOf = blocks.map((el) => parseFloat(getComputedStyle(el).marginTop) || 0);
+    const mbOf = blocks.map((el) => parseFloat(getComputedStyle(el).marginBottom) || 0);
+
+    // blocks[a..k] 单独放一页时的真实高度 = 首块上外边距 + 内部流高度 + 末块下外边距
+    const rangeHeight = (a, k) => mtOf[a] + (topOf[k] - topOf[a]) + heightOf[k] + mbOf[k];
+
+    const pages = [];
+    let start = 0;
+    for (let i = 1; i < blocks.length; i++) {
+      if (rangeHeight(start, i) > contentH) {
+        pages.push(blocks.slice(start, i));
+        start = i;
+      }
+    }
+    pages.push(blocks.slice(start));
+
+    // 生成页面；两页之间插入分隔提示
+    resumePages.innerHTML = '';
+    const total = Math.max(1, pages.length);
+    for (let i = 0; i < total; i++) {
+      if (i > 0) {
+        const d = document.createElement('div');
+        d.className = 'page-divider';
+        d.textContent = '—— 第 ' + (i + 1) + ' 页 ——';
+        resumePages.appendChild(d);
+      }
+      resumePages.appendChild(buildPage(pages[i] || [], i === 0, i, total));
+    }
+    pageCountEl.textContent = '共 ' + total + ' 页（A4）';
+  }
+
+  const rerender = () => renderResume(mdEditor.value);
+
+  // ===== 排版设置控件 =====
+  $('fontSelect').addEventListener('change', (e) => { state.font = e.target.value; rerender(); });
+  $('sizeRange').addEventListener('input', (e) => { state.size = +e.target.value; $('sizeVal').textContent = state.size; rerender(); });
+  $('lineRange').addEventListener('input', (e) => { state.lineH = +e.target.value; $('lineVal').textContent = state.lineH; rerender(); });
+  $('marginRange').addEventListener('input', (e) => { state.margin = +e.target.value; $('marginVal').textContent = state.margin; rerender(); });
+  $('headerInput').addEventListener('input', () => { state.header = $('headerInput').value; rerender(); });
+  $('footerInput').addEventListener('input', () => { state.footer = $('footerInput').value; rerender(); });
+  $('avatarAlign').addEventListener('change', (e) => { state.avatarAlign = e.target.value; rerender(); });
+  $('avatarXRange').addEventListener('input', (e) => { state.avatarX = +e.target.value; $('avatarXVal').textContent = state.avatarX; rerender(); });
+  $('avatarYRange').addEventListener('input', (e) => { state.avatarY = +e.target.value; $('avatarYVal').textContent = state.avatarY; rerender(); });
+  $('avatarWRange').addEventListener('input', (e) => { state.avatarW = +e.target.value; $('avatarWVal').textContent = state.avatarW; rerender(); });
+  $('avatarHRange').addEventListener('input', (e) => { state.avatarH = +e.target.value; $('avatarHVal').textContent = state.avatarH; rerender(); });
+
+  // ---- 头像上传 ----
+  avatarInput.addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      avatarData = ev.target.result;
+      avatarPreview.src = avatarData;
+      avatarPreview.style.display = 'block';
+      rerender();
+    };
+    reader.readAsDataURL(file);
+  });
+
+  // ---- 上传 .md 文件 ----
+  mdInput.addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      mdEditor.value = ev.target.result;
+      renderResume(ev.target.result);
+    };
+    reader.readAsText(file, 'utf-8');
+  });
+
+  // ---- 实时预览（防抖 120ms） ----
+  let timer;
+  mdEditor.addEventListener('input', () => {
+    clearTimeout(timer);
+    timer = setTimeout(rerender, 120);
+  });
+
+
+  // ---- 导出 PDF ----
+  $('exportPdf').addEventListener('click', async () => {
+    if (window.api && window.api.savePdf) {
+      const res = await window.api.savePdf();
+      if (res && res.ok) alert('PDF 已保存：\n' + res.filePath);
+      return;
+    }
+    window.print();
+  });
+
+  $('printBtn').addEventListener('click', () => window.print());
+
+  $('loadSample').addEventListener('click', () => {
+    mdEditor.value = SAMPLE;
+    renderResume(SAMPLE);
+  });
+  $('clearBtn').addEventListener('click', () => {
+    mdEditor.value = '';
+    renderResume('');
+  });
+
+  // ---- 初始化 ----
+  applyStyle();
+  mdEditor.value = SAMPLE;
+  renderResume(SAMPLE);
+</script>
+</body>
+</html>

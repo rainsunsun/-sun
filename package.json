@@ -1,0 +1,32 @@
+{
+  "name": "resume-maker",
+  "version": "1.0.0",
+  "description": "Markdown 简历生成器：实时预览 + 导出 PDF（文字可选中）",
+  "author": "sunll",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "build": "electron-builder"
+  },
+  "dependencies": {
+    "marked": "^12.0.0"
+  },
+  "devDependencies": {
+    "electron": "^32.0.0",
+    "electron-builder": "^25.0.0"
+  },
+  "build": {
+    "appId": "com.sunll.resumemaker",
+    "productName": "Markdown简历生成器",
+    "files": [
+      "index.html",
+      "main.js",
+      "preload.js",
+      "package.json"
+    ],
+    "win": {
+      "target": ["portable"],
+      "signAndEditExecutable": false
+    }
+  }
+}
